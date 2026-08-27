@@ -8,11 +8,29 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 
+# ---------------------------------------------------------
+# 1. Custom Emojis Configuration
+# ---------------------------------------------------------
+# UI Branding Emojis
+EMOJI_RUBY = "<:ruby:1539231061354086410>"
+EMOJI_SHINY = "<:shiny:1539231151313657876>"
+EMOJI_WRENCH = "<:wrench:1539230664996560967>"
+EMOJI_SECURITY = "<:security:1542594988280643597>"
+
+# Risk / Threat Level Badges
+EMOJI_CLEAN = EMOJI_SHINY
+EMOJI_LOW = "<:warn1:1542594591117672509>"
+EMOJI_MEDIUM = "<:warn2:1542594683749015623>"
+EMOJI_HIGH = "<:warn3:1542594782977728674>"
+
+# ---------------------------------------------------------
+# 2. Flask Web Server (For 24/7 Render Keep-Alive)
+# ---------------------------------------------------------
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Ruby is onlie"
+    return "Ruby Security Bot is running!"
 
 @app.route('/health')
 def health():
@@ -22,9 +40,12 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-TRIAGE_API_URL = "https://triage.ac/api/v1"
+# ---------------------------------------------------------
+# 3. VirusTotal & Discord Bot Logic
+# ---------------------------------------------------------
+VT_API_KEY = os.getenv("VT_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-TRIAGE_API_KEY = os.getenv("TRIAGE_API_KEY")
+VT_BASE_URL = "https://www.virustotal.com/api/v3"
 
 class RubyBot(commands.Bot):
     def __init__(self):
@@ -33,111 +54,147 @@ class RubyBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print("Slash Commands Synced")
+        print("Ruby slash commands synced!")
 
 bot = RubyBot()
 
-async def submit_and_poll_triage(file_bytes: bytes, filename: str, interaction: discord.Interaction):
-    headers = {"Authorization": f"Bearer {TRIAGE_API_KEY}"}
+async def poll_vt_analysis(analysis_id: str, session: aiohttp.ClientSession) -> dict:
+    headers = {"x-apikey": VT_API_KEY}
+    for _ in range(20):
+        await asyncio.sleep(10)
+        async with session.get(f"{VT_BASE_URL}/analyses/{analysis_id}", headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data.get("data", {}).get("attributes", {}).get("status") == "completed":
+                    return data.get("data", {}).get("attributes", {}).get("stats", {})
+            else:
+                raise Exception(f"VirusTotal error ({resp.status})")
+    raise TimeoutError("Scan took too long.")
+
+async def scan_file_vt(file_bytes: bytes, filename: str) -> tuple[dict, str]:
+    headers = {"x-apikey": VT_API_KEY}
+    sha256 = hashlib.sha256(file_bytes).hexdigest()
     
     async with aiohttp.ClientSession() as session:
-        data = aiohttp.FormData()
-        data.add_field('file', file_bytes, filename=filename)
-        
-        async with session.post(f"{TRIAGE_API_URL}/samples", headers=headers, data=data) as resp:
+        # 1. Quick lookup if file was scanned before
+        async with session.get(f"{VT_BASE_URL}/files/{sha256}", headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {}), sha256
+
+        # 2. Upload file if new
+        form = aiohttp.FormData()
+        form.add_field('file', file_bytes, filename=filename)
+        async with session.post(f"{VT_BASE_URL}/files", headers=headers, data=form) as resp:
             if resp.status != 200:
-                raise Exception(f"API returned status {resp.status}")
-            sample_data = await resp.json()
-            sample_id = sample_data.get("id")
+                raise Exception("Could not upload file to VirusTotal.")
+            upload_data = await resp.json()
+            analysis_id = upload_data.get("data", {}).get("id")
 
-        for elapsed in range(10, 180, 10):
-            await asyncio.sleep(10)
-            await interaction.edit_original_response(
-                content=f"**Checking...** ({elapsed}s elapsed)\n*Analyzing...*"
-            )
+        stats = await poll_vt_analysis(analysis_id, session)
+        return stats, sha256
 
-            async with session.get(f"{TRIAGE_API_URL}/samples/{sample_id}/overview", headers=headers) as rep_resp:
-                if rep_resp.status == 200:
-                    report = await rep_resp.json()
-                    return report, sample_id
-                elif rep_resp.status == 404:
-                    continue
-                else:
-                    raise Exception("Unexpected error while fetching report status.")
+async def scan_url_vt(url: str) -> tuple[dict, str]:
+    headers = {"x-apikey": VT_API_KEY}
+    url_id = hashlib.sha256(url.encode()).hexdigest()
 
-        raise TimeoutError("Sandbox detonator timed out after 3 minutes.")
+    async with aiohttp.ClientSession() as session:
+        # 1. Quick lookup if URL was scanned before
+        async with session.get(f"{VT_BASE_URL}/urls/{url_id}", headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {}), url_id
 
-@bot.tree.command(name="scan", description="Deep-scan a file for threats using Hatching Triage Sandbox")
+        # 2. Submit URL if new
+        async with session.post(f"{VT_BASE_URL}/urls", headers=headers, data={"url": url}) as resp:
+            if resp.status != 200:
+                raise Exception("Could not submit link to VirusTotal.")
+            upload_data = await resp.json()
+            analysis_id = upload_data.get("data", {}).get("id")
+
+        stats = await poll_vt_analysis(analysis_id, session)
+        return stats, url_id
+
+# ---------------------------------------------------------
+# 4. Slash Command (/scan)
+# ---------------------------------------------------------
+@bot.tree.command(name="scan", description="Scan a file or link for viruses using VirusTotal")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@app_commands.describe(file="Select the file attachment to analyze")
-async def scan_file(interaction: discord.Interaction, file: discord.Attachment):
+@app_commands.describe(
+    file="File attachment to scan",
+    url="Website link to scan"
+)
+async def scan(interaction: discord.Interaction, file: discord.Attachment = None, url: str = None):
     await interaction.response.defer(thinking=True, ephemeral=True)
 
-    if file.size > 25 * 1024 * 1024:
-        await interaction.followup.send("**File Size Exceeded:** Maximum size for analysis is 25 MB.", ephemeral=True)
+    if not file and not url:
+        await interaction.followup.send(f"{EMOJI_WRENCH} Provide either a file or a link to scan.", ephemeral=True)
         return
 
-    file_bytes = await file.read()
-    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-
     try:
-        await interaction.edit_original_response(content="📤 **Uploading payload to Hatching Triage Sandbox...**")
-        report, sample_id = await submit_and_poll_triage(file_bytes, file.filename, interaction)
+        if file:
+            if file.size > 32 * 1024 * 1024:
+                await interaction.followup.send("File is too large (32MB limit).", ephemeral=True)
+                return
 
-        score = report.get("analysis", {}).get("score", 0)
-        family = report.get("targets", [{}])[0].get("family", "Generic / Unclassified")
-        
-        if score >= 8:
-            color = discord.Color.from_rgb(255, 45, 85)
-            verdict_badge = "CRITICAL MALWARE DETECTED"
-            risk_desc = f"High severity activity registered. Identified signature: `{family}`."
-        elif score >= 5:
-            color = discord.Color.from_rgb(255, 149, 0)
-            verdict_badge = "SUSPICIOUS BEHAVIOR"
-            risk_desc = "Suspicious system interactions or API calls recorded during execution."
-        elif score >= 1:
-            color = discord.Color.from_rgb(255, 204, 0)
-            verdict_badge = "LOW RISK / UNKNOWN"
-            risk_desc = "Minor low-risk anomalies spotted. Likely benign executable."
+            await interaction.edit_original_response(content=f"{EMOJI_SECURITY} Analyzing file...")
+            file_bytes = await file.read()
+            stats, item_id = await scan_file_vt(file_bytes, file.filename)
+            item_name = file.filename
+            vt_link = f"https://www.virustotal.com/gui/file/{item_id}"
+            target_type = "File"
+
         else:
-            color = discord.Color.from_rgb(48, 209, 88)
-            verdict_badge = "CLEAN / NO THREATS FOUND"
-            risk_desc = "No malicious indicators or suspicious network calls detected."
+            await interaction.edit_original_response(content=f"{EMOJI_SECURITY} Analyzing link...")
+            stats, item_id = await scan_url_vt(url)
+            item_name = url
+            vt_link = f"https://www.virustotal.com/gui/url/{item_id}"
+            target_type = "Link"
+
+        # Threat counts
+        malicious = stats.get("malicious", 0)
+        suspicious = stats.get("suspicious", 0)
+        harmless = stats.get("harmless", 0) + stats.get("undetected", 0)
+        total = malicious + suspicious + harmless
+
+        # Pick color and warning level emoji
+        if malicious >= 5:
+            color = discord.Color.from_rgb(235, 50, 50)
+            badge = f"{EMOJI_HIGH} High Risk"
+        elif malicious >= 1 or suspicious >= 2:
+            color = discord.Color.from_rgb(240, 140, 30)
+            badge = f"{EMOJI_MEDIUM} Suspicious"
+        elif suspicious == 1:
+            color = discord.Color.from_rgb(240, 200, 40)
+            badge = f"{EMOJI_LOW} Low Risk"
+        else:
+            color = discord.Color.from_rgb(40, 200, 100)
+            badge = f"{EMOJI_CLEAN} Safe"
 
         embed = discord.Embed(
-            title=f"Security Report • {file.filename}",
-            description=f"**Verdict:** `{verdict_badge}`\n{risk_desc}",
+            title=f"Ruby Security • {target_type} Scan",
             color=color
         )
-        
-        filled_blocks = int(score)
-        score_bar = "🟥" * filled_blocks + "⬛" * (10 - filled_blocks) if score >= 5 else "🟩" * filled_blocks + "⬛" * (10 - filled_blocks)
-        
-        embed.add_field(name="Threat Score", value=f"{score_bar} **{score}/10**", inline=False)
-        embed.add_field(name="File Name", value=f"`{file.filename}`", inline=True)
-        embed.add_field(name="File Size", value=f"`{round(file.size / 1024, 2)} KB`", inline=True)
-        embed.add_field(name="SHA-256 Digest", value=f"```text\n{sha256_hash}\n```", inline=False)
-        embed.set_footer(text="Ruby Security Engine • Hatching Triage Sandbox", icon_url=bot.user.display_avatar.url)
+        embed.add_field(name="Target", value=f"`{item_name}`", inline=False)
+        embed.add_field(name="Verdict", value=badge, inline=True)
+        embed.add_field(name="Detections", value=f"**{malicious + suspicious}** / {total} engines", inline=True)
+        embed.set_footer(text="Ruby Security", icon_url=bot.user.display_avatar.url)
 
         view = discord.ui.View()
-        report_url = f"https://triage.ac/{sample_id}"
-        view.add_item(discord.ui.Button(label="View Full Sandbox Interactive Analysis", url=report_url, style=discord.ButtonStyle.link, emoji="🔗"))
+        view.add_item(discord.ui.Button(label="Open VirusTotal Report", url=vt_link, style=discord.ButtonStyle.link))
 
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
-    except TimeoutError as te:
-        await interaction.edit_original_response(content=f"**Analysis Timed Out:** {str(te)}")
+    except TimeoutError:
+        await interaction.edit_original_response(content=f"{EMOJI_WRENCH} The scan took too long. Try again or check VirusTotal directly.")
     except Exception as e:
-        await interaction.edit_original_response(content=f"**Scan Error:** `{str(e)}`")
+        await interaction.edit_original_response(content=f"{EMOJI_WRENCH} Scan error: `{str(e)}`")
 
-def start_bot():
-    bot.run(DISCORD_TOKEN)
-
+# ---------------------------------------------------------
+# 5. Startup
+# ---------------------------------------------------------
 if __name__ == "__main__":
-    # Start Flask server in a daemon thread so it runs concurrently with Discord.py
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    
-    # Run Discord Bot on the main thread
-    start_bot()
+    bot.run(DISCORD_TOKEN)
