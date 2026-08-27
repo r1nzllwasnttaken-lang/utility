@@ -11,17 +11,10 @@ from flask import Flask
 # ---------------------------------------------------------
 # 1. Custom Emojis Configuration
 # ---------------------------------------------------------
-# UI Branding Emojis
 EMOJI_RUBY = "<:ruby:1539231061354086410>"
 EMOJI_SHINY = "<:shiny:1539231151313657876>"
 EMOJI_WRENCH = "<:wrench:1539230664996560967>"
 EMOJI_SECURITY = "<:security:1542594988280643597>"
-
-# Risk / Threat Level Badges
-EMOJI_CLEAN = EMOJI_SHINY
-EMOJI_LOW = "<:warn1:1542594591117672509>"
-EMOJI_MEDIUM = "<:warn2:1542594683749015623>"
-EMOJI_HIGH = "<:warn3:1542594782977728674>"
 
 # ---------------------------------------------------------
 # 2. Flask Web Server (For 24/7 Render Keep-Alive)
@@ -54,7 +47,7 @@ class RubyBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print("Ruby slash commands synced!")
+        print("Ruby slash commands synced globally!")
 
 bot = RubyBot()
 
@@ -76,13 +69,13 @@ async def scan_file_vt(file_bytes: bytes, filename: str) -> tuple[dict, str]:
     sha256 = hashlib.sha256(file_bytes).hexdigest()
     
     async with aiohttp.ClientSession() as session:
-        # 1. Quick lookup if file was scanned before
+        # Quick lookup if file was scanned before
         async with session.get(f"{VT_BASE_URL}/files/{sha256}", headers=headers) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 return data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {}), sha256
 
-        # 2. Upload file if new
+        # Upload file if new
         form = aiohttp.FormData()
         form.add_field('file', file_bytes, filename=filename)
         async with session.post(f"{VT_BASE_URL}/files", headers=headers, data=form) as resp:
@@ -99,13 +92,13 @@ async def scan_url_vt(url: str) -> tuple[dict, str]:
     url_id = hashlib.sha256(url.encode()).hexdigest()
 
     async with aiohttp.ClientSession() as session:
-        # 1. Quick lookup if URL was scanned before
+        # Quick lookup if URL was scanned before
         async with session.get(f"{VT_BASE_URL}/urls/{url_id}", headers=headers) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 return data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {}), url_id
 
-        # 2. Submit URL if new
+        # Submit URL if new
         async with session.post(f"{VT_BASE_URL}/urls", headers=headers, data={"url": url}) as resp:
             if resp.status != 200:
                 raise Exception("Could not submit link to VirusTotal.")
@@ -126,6 +119,7 @@ async def scan_url_vt(url: str) -> tuple[dict, str]:
     url="Website link to scan"
 )
 async def scan(interaction: discord.Interaction, file: discord.Attachment = None, url: str = None):
+    # Standard defer so Discord doesn't timeout while waiting for VT API response
     await interaction.response.defer(thinking=True, ephemeral=True)
 
     if not file and not url:
@@ -138,19 +132,17 @@ async def scan(interaction: discord.Interaction, file: discord.Attachment = None
                 await interaction.followup.send("File is too large (32MB limit).", ephemeral=True)
                 return
 
-            await interaction.edit_original_response(content=f"{EMOJI_SECURITY} Analyzing file...")
             file_bytes = await file.read()
             stats, item_id = await scan_file_vt(file_bytes, file.filename)
             item_name = file.filename
             vt_link = f"https://www.virustotal.com/gui/file/{item_id}"
-            target_type = "File"
+            target_field_name = "Target File"
 
         else:
-            await interaction.edit_original_response(content=f"{EMOJI_SECURITY} Analyzing link...")
             stats, item_id = await scan_url_vt(url)
             item_name = url
             vt_link = f"https://www.virustotal.com/gui/url/{item_id}"
-            target_type = "Link"
+            target_field_name = "Target URL"
 
         # Threat counts
         malicious = stats.get("malicious", 0)
@@ -158,32 +150,36 @@ async def scan(interaction: discord.Interaction, file: discord.Attachment = None
         harmless = stats.get("harmless", 0) + stats.get("undetected", 0)
         total = malicious + suspicious + harmless
 
-        # Pick color and warning level emoji
+        # Verdict text and embed border color
         if malicious >= 5:
             color = discord.Color.from_rgb(235, 50, 50)
-            badge = f"{EMOJI_HIGH} High Risk"
+            verdict_text = "High Risk"
         elif malicious >= 1 or suspicious >= 2:
             color = discord.Color.from_rgb(240, 140, 30)
-            badge = f"{EMOJI_MEDIUM} Suspicious"
+            verdict_text = "Suspicious"
         elif suspicious == 1:
             color = discord.Color.from_rgb(240, 200, 40)
-            badge = f"{EMOJI_LOW} Low Risk"
+            verdict_text = "Low Risk"
         else:
             color = discord.Color.from_rgb(40, 200, 100)
-            badge = f"{EMOJI_CLEAN} Safe"
+            verdict_text = "Clean / Safe"
 
+        # Final Embed Configuration
         embed = discord.Embed(
-            title=f"Ruby Security • {target_type} Scan",
+            title=f"Ruby Virus Scan {EMOJI_RUBY}",
             color=color
         )
-        embed.add_field(name="Target", value=f"`{item_name}`", inline=False)
-        embed.add_field(name="Verdict", value=badge, inline=True)
-        embed.add_field(name="Detections", value=f"**{malicious + suspicious}** / {total} engines", inline=True)
-        embed.set_footer(text="Ruby Security", icon_url=bot.user.display_avatar.url)
+        embed.add_field(name=target_field_name, value=f"`{item_name}`", inline=False)
+        embed.add_field(name="Verdict", value=verdict_text, inline=True)
+        embed.add_field(name="Detections", value=f"{malicious + suspicious} / {total} engines", inline=True)
+        
+        # Clean Footer without icons
+        embed.set_footer(text="Ruby Security")
 
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label="Open VirusTotal Report", url=vt_link, style=discord.ButtonStyle.link))
 
+        # Replaces loading state directly with the finished embed
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
     except TimeoutError:
