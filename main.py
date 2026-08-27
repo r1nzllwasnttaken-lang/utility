@@ -119,7 +119,6 @@ async def scan_url_vt(url: str) -> tuple[dict, str]:
     url="Website link to scan"
 )
 async def scan(interaction: discord.Interaction, file: discord.Attachment = None, url: str = None):
-    # Standard defer so Discord doesn't timeout while waiting for VT API response
     await interaction.response.defer(thinking=True, ephemeral=True)
 
     if not file and not url:
@@ -164,22 +163,20 @@ async def scan(interaction: discord.Interaction, file: discord.Attachment = None
             color = discord.Color.from_rgb(40, 200, 100)
             verdict_text = "Clean / Safe"
 
-        # Final Embed Configuration
+        # Final Embed Configuration (Header moved to description)
         embed = discord.Embed(
-            title=f"Ruby Virus Scan {EMOJI_RUBY}",
+            description=f"## Ruby Virus Scan {EMOJI_RUBY}",
             color=color
         )
         embed.add_field(name=target_field_name, value=f"`{item_name}`", inline=False)
         embed.add_field(name="Verdict", value=verdict_text, inline=True)
         embed.add_field(name="Detections", value=f"{malicious + suspicious} / {total} engines", inline=True)
         
-        # Clean Footer without icons
         embed.set_footer(text="Ruby Security")
 
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label="Open VirusTotal Report", url=vt_link, style=discord.ButtonStyle.link))
 
-        # Replaces loading state directly with the finished embed
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
     except TimeoutError:
