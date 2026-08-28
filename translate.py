@@ -69,7 +69,7 @@ class TranslateCog(commands.Cog):
             translated_text, detected_src = await deepl_translate(text, target_lang)
 
             embed = discord.Embed(
-                description=f"## Ruby Translator {EMOJI_RUBY}",
+                description=f"## Ruby Translator{EMOJI_RUBY}",
                 color=discord.Color.from_rgb(90, 160, 245)
             )
             
