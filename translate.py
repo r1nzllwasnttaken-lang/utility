@@ -69,16 +69,15 @@ class TranslateCog(commands.Cog):
             translated_text, detected_src = await deepl_translate(text, target_lang)
 
             embed = discord.Embed(
-                description=f"## Ruby Translator{EMOJI_RUBY}",
+                description=f"## Translation{EMOJI_RUBY}",
                 color=discord.Color.from_rgb(90, 160, 245)
             )
             
-            # Format display text (truncate long text previews if needed)
             src_display = text if len(text) <= 1024 else text[:1021] + "..."
             embed.add_field(name=f"Original ({detected_src.upper()})", value=src_display, inline=False)
             embed.add_field(name=f"Translation ({target_lang.upper()})", value=translated_text, inline=False)
             
-            embed.set_footer(text="Powered by DeepL")
+            embed.set_footer(text="Ruby Security")
 
             await interaction.edit_original_response(content=None, embed=embed)
 
