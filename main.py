@@ -35,6 +35,7 @@ class RubyBot(commands.Bot):
         # Load command cogs
         await self.load_extension("scan")
         await self.load_extension("translate")
+        await self.load_extension("define")
         
         # Sync slash commands globally
         await self.tree.sync()
