@@ -128,7 +128,7 @@ class ScanCog(commands.Cog):
                 verdict_text = "Clean / Safe"
 
             embed = discord.Embed(
-                description=f"##Virus Scan{EMOJI_RUBY}",
+                description=f"## Virus Scan{EMOJI_RUBY}",
                 color=color
             )
             embed.add_field(name=target_field_name, value=f"`{item_name}`", inline=False)
