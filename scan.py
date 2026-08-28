@@ -72,18 +72,29 @@ class ScanCog(commands.Cog):
     @app_commands.command(name="scan", description="Scan a file or link for viruses using VirusTotal")
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @app_commands.describe(file="File attachment to scan", url="Website link to scan")
-    async def scan(self, interaction: discord.Interaction, file: discord.Attachment = None, url: str = None):
-        await interaction.response.defer(thinking=True, ephemeral=True)
+    @app_commands.describe(
+        file="File attachment to scan", 
+        url="Website link to scan",
+        public="Set to True to make the response visible to everyone (Default: False)"
+    )
+    async def scan(
+        self, 
+        interaction: discord.Interaction, 
+        file: discord.Attachment = None, 
+        url: str = None,
+        public: bool = False
+    ):
+        is_ephemeral = not public
+        await interaction.response.defer(thinking=True, ephemeral=is_ephemeral)
 
         if not file and not url:
-            await interaction.followup.send(f"{EMOJI_WRENCH} Provide either a file or a link to scan.", ephemeral=True)
+            await interaction.followup.send(f"{EMOJI_WRENCH} Provide either a file or a link to scan.", ephemeral=is_ephemeral)
             return
 
         try:
             if file:
                 if file.size > 32 * 1024 * 1024:
-                    await interaction.followup.send("File is too large (32MB limit).", ephemeral=True)
+                    await interaction.followup.send("File is too large (32MB limit).", ephemeral=is_ephemeral)
                     return
 
                 file_bytes = await file.read()
@@ -117,7 +128,7 @@ class ScanCog(commands.Cog):
                 verdict_text = "Clean / Safe"
 
             embed = discord.Embed(
-                description=f"## Ruby Virus Scan {EMOJI_RUBY}",
+                description=f"##Virus Scan{EMOJI_RUBY}",
                 color=color
             )
             embed.add_field(name=target_field_name, value=f"`{item_name}`", inline=False)
