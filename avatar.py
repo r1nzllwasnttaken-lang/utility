@@ -28,7 +28,7 @@ class AvatarCog(commands.Cog):
         avatar_url = target.display_avatar.with_size(1024).url
 
         embed = discord.Embed(
-            description=f"_ _",
+            description=f"",
             color=discord.Color.from_rgb(150, 100, 240)
         )
         embed.add_field(name="User", value=target.mention, inline=False)
