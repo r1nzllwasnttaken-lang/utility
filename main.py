@@ -31,13 +31,15 @@ class RubyBot(commands.Bot):
         intents = discord.Intents.default()
         super().__init__(command_prefix="!", intents=intents)
 
-async def setup_hook(self):
+    async def setup_hook(self):
+        # Load command cogs
         await self.load_extension("scan")
         await self.load_extension("translate")
         await self.load_extension("define")
         await self.load_extension("avatar")
         await self.load_extension("savatar")
         
+        # Sync slash commands globally
         await self.tree.sync()
         print("Ruby slash commands synced globally!")
 
