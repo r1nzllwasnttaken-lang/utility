@@ -37,7 +37,7 @@ class RubyBot(commands.Bot):
         await self.load_extension("translate")
         await self.load_extension("define")
         await self.load_extension("avatar")
-        await self.load_extension("savatar")
+        await self.load_extension("ravatar")
         
         # Sync slash commands globally
         await self.tree.sync()
