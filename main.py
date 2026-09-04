@@ -28,7 +28,9 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 class RubyBot(commands.Bot):
     def __init__(self):
+        # Configure Intents including privileged Message Content Intent
         intents = discord.Intents.default()
+        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
@@ -38,6 +40,8 @@ class RubyBot(commands.Bot):
         await self.load_extension("define")
         await self.load_extension("avatar")
         await self.load_extension("ravatar")
+        await self.load_extension("status")
+        await self.load_extension("whois")
         
         # Sync slash commands globally
         await self.tree.sync()
