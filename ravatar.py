@@ -26,23 +26,34 @@ async def get_roblox_user(username: str) -> tuple[int, str, str] | None:
     return None
 
 async def fetch_avatar_urls(user_id: int) -> tuple[str, str, str]:
-    params = {"userIds": [user_id], "size": "720x720", "format": "Png", "isCircular": "false"}
+    params = {
+        "userIds": str(user_id),
+        "size": "720x720",
+        "format": "Png",
+        "isCircular": "false"
+    }
     
     async with aiohttp.ClientSession() as session:
         # Full Body
         async with session.get(ROBLOX_THUMBNAILS_API, params=params) as resp:
-            body_data = await resp.json()
-            body_url = body_data["data"][0]["imageUrl"]
+            body_json = await resp.json()
+            if resp.status != 200 or "data" not in body_json or not body_json["data"]:
+                raise Exception(f"Failed to fetch body thumbnail (Status {resp.status})")
+            body_url = body_json["data"][0]["imageUrl"]
             
         # Headshot
         async with session.get(ROBLOX_HEADSHOT_API, params=params) as resp:
-            head_data = await resp.json()
-            head_url = head_data["data"][0]["imageUrl"]
+            head_json = await resp.json()
+            if resp.status != 200 or "data" not in head_json or not head_json["data"]:
+                raise Exception(f"Failed to fetch headshot thumbnail (Status {resp.status})")
+            head_url = head_json["data"][0]["imageUrl"]
 
         # Bust
         async with session.get(ROBLOX_BUST_API, params=params) as resp:
-            bust_data = await resp.json()
-            bust_url = bust_data["data"][0]["imageUrl"]
+            bust_json = await resp.json()
+            if resp.status != 200 or "data" not in bust_json or not bust_json["data"]:
+                raise Exception(f"Failed to fetch bust thumbnail (Status {resp.status})")
+            bust_url = bust_json["data"][0]["imageUrl"]
 
     return body_url, head_url, bust_url
 
@@ -52,22 +63,18 @@ async def download_image(url: str, session: aiohttp.ClientSession) -> Image.Imag
         return Image.open(io.BytesIO(content)).convert("RGBA")
 
 def create_composite_image(body_img: Image.Image, head_img: Image.Image, bust_img: Image.Image) -> io.BytesIO:
-    # Canvas dimensions matching multi-render grid layout
     canvas_width = 1200
     canvas_height = 720
     canvas = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
 
-    # Resize renders
     body_resized = body_img.resize((720, 720), Image.Resampling.LANCZOS)
     head_resized = head_img.resize((380, 380), Image.Resampling.LANCZOS)
     bust_resized = bust_img.resize((380, 380), Image.Resampling.LANCZOS)
 
-    # Composite onto transparent background
     canvas.paste(body_resized, (0, 0), body_resized)
     canvas.paste(head_resized, (780, 0), head_resized)
     canvas.paste(bust_resized, (780, 340), bust_resized)
 
-    # Save to buffer
     buffer = io.BytesIO()
     canvas.save(buffer, format="PNG")
     buffer.seek(0)
@@ -104,7 +111,6 @@ class RAvatarCog(commands.Cog):
             user_id, name, display_name = roblox_user
             body_url, head_url, bust_url = await fetch_avatar_urls(user_id)
 
-            # Download renders and create composed PNG
             async with aiohttp.ClientSession() as session:
                 body_img = await download_image(body_url, session)
                 head_img = await download_image(head_url, session)
@@ -113,7 +119,6 @@ class RAvatarCog(commands.Cog):
             image_buffer = create_composite_image(body_img, head_img, bust_img)
             discord_file = discord.File(fp=image_buffer, filename="roblox_avatar.png")
 
-            # Embed setup
             profile_url = f"https://www.roblox.com/users/{user_id}/profile"
             embed = discord.Embed(
                 description=f"## [{display_name} (@{name})]({profile_url}) {EMOJI_RUBY}",
