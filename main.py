@@ -39,7 +39,6 @@ class RubyBot(commands.Bot):
         await self.load_extension("translate")
         await self.load_extension("define")
         await self.load_extension("avatar")
-        await self.load_extension("ravatar")
         await self.load_extension("status")
         await self.load_extension("whois")
         
